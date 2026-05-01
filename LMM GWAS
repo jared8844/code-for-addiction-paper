@@ -1,0 +1,17 @@
+for c in {1..22}; do
+  cat > run_chr${c}.txt <<EOF
+--bed chr${c}.wisard.bed
+--sampvar my_pheno.txt
+--pname NIC_FAC,CON_FAC,DEP_FAC,DRG_FAC,BD_FAC
+--cname AGE,SEX,BirthYear,GENERATION
+--cor king_iid.kin
+--ignorefid
+--gemma
+--thread 8
+--remna
+--gz
+--out gemma_chr${c}
+EOF
+
+  echo "[$(date)] chr${c}: running WISARD…"
+  wisard --runas run_chr${c}.txt &> gemma_chr${c}.log \
