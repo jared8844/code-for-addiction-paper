@@ -1,0 +1,10 @@
+wisard \
+  --bed validation_lead83 \
+  --mfqls \
+  --kinship \
+  --sampvar pheno.noNA.txt \
+  --pname illicit_anydep_cc \
+  --cname AGE,SEX \
+  --prevalence 0.05 \
+  --heri 0.4 \
+  --out illicit_anydep_cc_mfqls
