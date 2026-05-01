@@ -1,0 +1,62 @@
+for chr in {1..22}; do
+  echo "=========================================="
+  echo "Starting processing for Chromosome ${chr}..."
+  echo "=========================================="
+
+  # Step 1: Create a sparse dataset directly from the dense imputed data
+  echo "1. Pruning dense data to create sparse dataset for chr${chr}..."
+  plink --bfile gdt_chr${chr} --indep-pairwise 500 50 0.2 --out prune_chr${chr}
+  plink --bfile gdt_chr${chr} --extract prune_chr${chr}.prune.in --make-bed --out gdt_chr${chr}_sparse
+
+  # Step 2: Run IBD inference on the sparse data
+  echo "2. Running IBD inference on sparse chr${chr}..."
+  ibd.py \
+    --bed gdt_chr${chr}_sparse \
+    --pedigree pedigree_snipar.txt \
+    --map gdt_chr${chr}.snipar2.map \
+    --out ibd_chr${chr} \
+    --threads 4 \
+    --p_error 0.001
+
+  # SAFEGUARD: Check if the IBD file was actually created before continuing
+  RAW_IBD=$(ls ibd_chr${chr}*.ibd.segments.gz 2>/dev/null | head -n 1)
+  if [ -z "$RAW_IBD" ]; then
+    echo "ERROR: IBD failed for Chr ${chr}. Skipping the rest of this chromosome to prevent cascade failure."
+    continue
+  fi
+
+  # Step 2.5: The Automated Troubleshooting Fix
+  echo "Applying the IBD0 / Chromosome column bug fix..."
+  zcat "${RAW_IBD}" | awk -v c="${chr}" 'BEGIN{OFS="\t"} {if(NR>1) $4=c; print $0}' | gzip > fixed_ibd_chr${chr}.ibd.segments.gz
+
+  # Step 3: Run Impute on the DENSE data using the fixed IBD segments
+  echo "3. Imputing dense data for chr${chr}..."
+  impute.py \
+    --ibd fixed_ibd_chr${chr}.ibd \
+    --bed gdt_chr${chr} \
+    --pedigree pedigree_snipar.txt \
+    --out final_imputed_chr${chr} \
+    --threads 4
+
+  # SAFEGUARD: Check if imputation succeeded
+  if [ ! -f "final_imputed_chr${chr}.hdf5" ]; then
+    echo "ERROR: Imputation failed for Chr ${chr}. Skipping PGS."
+    continue
+  fi
+
+  # Step 4: Calculate the Polygenic Risk Scores (PRS) - Fixed .hdf5 extension
+  echo "4. Calculating PRS for chr${chr}..."
+  pgs.py \
+    --bed gdt_chr${chr} \
+    --imp final_imputed_chr${chr} \
+    --pedigree pedigree_snipar.txt \
+    --weights weights.chr${chr}.tsv \
+    --SNP SNP \
+    --beta_col BETA \
+    --A1 A1 \
+    --A2 A2 \
+    final_prs_chr${chr}
+    
+  echo "Finished Chromosome ${chr} successfully!"
+  echo ""
+done
