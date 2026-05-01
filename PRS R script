@@ -1,0 +1,49 @@
+
+# ==============================================================================
+# MCTFR PRS ANALYSIS: GENERATIONAL GxE AND WITHIN-FAMILY PARTITIONING
+# ==============================================================================
+# Required Libraries
+library(dplyr)
+library(purrr)
+library(readr)
+library(lmerTest) # For mixed models with p-values
+library(tidyr)
+library(ggplot2)
+
+# ------------------------------------------------------------------------------
+# 1. DATA LOADING & AGGREGATION
+# ------------------------------------------------------------------------------
+
+# Paths (Adjusted to your local directories)
+path_eigen  <- "C:/Users/Admin/Downloads/eigen/my_genetic_PCs.eigenvec"
+path_plink  <- "C:/Users/Admin/Downloads/plink"
+path_snipar <- "C:/Users/Admin/Downloads/snipar"
+path_pheno  <- "C:/Users/Admin/Downloads/my_pheno.txt"
+
+# A. Load Phenotypes & PCs
+pheno_data <- read.table(path_pheno, header = TRUE, stringsAsFactors = FALSE)
+pcs <- read.table(path_eigen, header = FALSE, stringsAsFactors = FALSE)
+colnames(pcs) <- c("FID", "IID", paste0("PC", 1:10))
+
+# B. Aggregate Standard PRS (PLINK .profile files)
+plink_files <- list.files(path = path_plink, pattern = "\\.profile$", full.names = TRUE)
+standard_prs <- map_dfr(plink_files, read.table, header = TRUE) %>%
+  group_by(FID, IID) %>%
+  summarise(Total_Standard_PRS = sum(SCORE, na.rm = TRUE), .groups = 'drop') %>%
+  mutate(Standard_PRS_Z = scale(Total_Standard_PRS)[,1])
+
+# C. Aggregate Partitioned PRS (SNIPAR .pgs.txt files)
+snipar_files <- list.files(path = path_snipar, pattern = "\\.pgs\\.txt$", full.names = TRUE)
+partitioned_prs <- map_dfr(snipar_files, read.table, header = TRUE) %>%
+  group_by(FID, IID) %>%
+  summarise(
+    Proband_PRS = sum(proband, na.rm = TRUE),
+    Paternal_PRS = sum(paternal, na.rm = TRUE),
+    Maternal_PRS = sum(maternal, na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    Proband_Z = scale(Proband_PRS)[,1],
+    Paternal_Z = scale(Paternal_PRS)[,1],
+    Maternal_Z = scale(Maternal_PRS)[,1],
+    Mid_Parent_Z = (Paternal_
