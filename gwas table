@@ -1,0 +1,124 @@
+#!/bin/bash
+# ==============================================================================
+# Script: 1_clumping_and_gemma.sh
+# Purpose: Perform LD clumping on GWAS summary statistics to identify 
+#          independent loci, and calculate exact Betas using the full kinship matrix.
+# ==============================================================================
+
+# Define thresholds based on manuscript
+PVAL_THRESH=0.000005    # Suggestive significance (5e-6)
+LD_R2=0.1               # r^2 threshold
+WINDOW_KB=250           # kb window for clumping
+
+# ------------------------------------------------------------------------------
+# STEP 1: LD Clumping via PLINK
+# Clump the raw GEMMA summary statistics to identify independent lead SNPs.
+# ------------------------------------------------------------------------------
+plink \
+    --bfile ./data/full_dataset \
+    --clump ./data/gemma_summary_stats.txt \
+    --clump-p1 ${PVAL_THRESH} \
+    --clump-r2 ${LD_R2} \
+    --clump-kb ${WINDOW_KB} \
+    --out ./output/clumped_results
+
+# Extract the list of independent lead SNPs (rsIDs) from the clumping output
+awk 'NR!=1{print $3}' ./output/clumped_results.clumped > ./data/top83_snps.txt
+
+# ------------------------------------------------------------------------------
+# STEP 2: Extract Lead Loci
+# Create a targeted dataset containing only the lead SNPs for faster processing.
+# ------------------------------------------------------------------------------
+plink \
+    --bfile ./data/full_dataset \
+    --extract ./data/top83_snps.txt \
+    --make-bed \
+    --out ./data/mini_dataset_83
+
+# ------------------------------------------------------------------------------
+# STEP 3: Calculate Exact Effect Sizes (Betas)
+# Run GEMMA on the targeted variants using the ORIGINAL full-genome kinship 
+# matrix to ensure accurate variance estimation.
+# ------------------------------------------------------------------------------
+# Phenotype 1: Nicotine
+gemma -bfile ./data/mini_dataset_83 -k ./data/gemmaphenokinship.cXX.txt -c ./data/gemma.covar.txt -p ./data/gemma.pheno.txt -lmm 4 -n 1 -o top83_results_pheno1
+
+# Phenotype 2: Alcohol Consumption
+gemma -bfile ./data/mini_dataset_83 -k ./data/gemmaphenokinship.cXX.txt -c ./data/gemma.covar.txt -p ./data/gemma.pheno.txt -lmm 4 -n 2 -o top83_results_pheno2
+
+# Phenotype 3: Alcohol Dependence
+gemma -bfile ./data/mini_dataset_83 -k ./data/gemmaphenokinship.cXX.txt -c ./data/gemma.covar.txt -p ./data/gemma.pheno.txt -lmm 4 -n 3 -o top83_results_pheno3
+
+# Phenotype 4: Drug Use
+gemma -bfile ./data/mini_dataset_83 -k ./data/gemmaphenokinship.cXX.txt -c ./data/gemma.covar.txt -p ./data/gemma.pheno.txt -lmm 4 -n 4 -o top83_results_pheno4
+
+# Phenotype 5: Behavioral Disinhibition
+gemma -bfile ./data/mini_dataset_83 -k ./data/gemmaphenokinship.cXX.txt -c ./data/gemma.covar.txt -p ./data/gemma.pheno.txt -lmm 4 -n 5 -o top83_results_pheno5
+
+
+# ==============================================================================
+# Script: 2_format_publication_tables.R
+# Purpose: Map phenotypes, sort top loci, and export publication-ready 
+#          tables (Main Text Top 15 and Supplementary Table S1).
+# ==============================================================================
+
+# Load required libraries
+if(!require(dplyr)) install.packages("dplyr")
+if(!require(gridExtra)) install.packages("gridExtra")
+library(dplyr)
+library(gridExtra)
+
+# 1. Load the annotated dataset 
+# (Replace with the actual filename of your combined 83-row dataset)
+final_83_table <- read.csv("./data/annotated_lead_snps.csv", stringsAsFactors = FALSE)
+
+# 2. Map phenotypes to final manuscript nomenclature
+final_83_table <- final_83_table %>%
+  mutate(Phenotype_Name = case_when(
+    Phenotype_Name %in% c("NIC_FAC", "pheno1") ~ "Nicotine",
+    Phenotype_Name %in% c("CON_FAC", "pheno2") ~ "Alcohol Consumption",
+    Phenotype_Name %in% c("DEP_FAC", "pheno3") ~ "Alcohol Dependence",
+    Phenotype_Name %in% c("DRG_FAC", "pheno4") ~ "Drug Use",
+    Phenotype_Name %in% c("BD_FAC",  "pheno5") ~ "Behavioral Disinhibition",
+    TRUE ~ Phenotype_Name
+  ))
+
+# 3. Sort mathematically by P-value and structure columns
+sorted_table <- final_83_table %>%
+  arrange(as.numeric(p_lrt)) %>%
+  select(
+    `Trait`              = Phenotype_Name,
+    `Lead Variant`       = RSID,
+    `Position (Chr:BP)`  = Location,
+    `Annotated Gene`     = Gene,
+    `Consequence`        = consequence,
+    `Beta (SE)`          = Beta_SE,
+    `P-value (LRT)`      = p_lrt,
+    `Prior Associations` = prev_traits,
+    `PMID`               = prev_pubmed
+  )
+
+# 4. Standardize missing data and format P-values
+sorted_table$`Prior Associations`[sorted_table$`Prior Associations` %in% c("Novel", "", NA)] <- "N/A"
+sorted_table$`PMID`[is.na(sorted_table$`PMID`) | sorted_table$`PMID` == ""] <- "N/A"
+sorted_table$`P-value (LRT)` <- formatC(as.numeric(sorted_table$`P-value (LRT)`), format = "e", digits = 2)
+
+# ==============================================================================
+# EXPORT DATA
+# ==============================================================================
+out_dir <- "./output/"
+dir.create(out_dir, showWarnings = FALSE)
+
+# Export Full Supplementary Table S1 (83 Loci)
+write.csv(sorted_table, paste0(out_dir, "Supplementary_Table_S1_Full.csv"), row.names = FALSE)
+
+# Export Main Text Table 1 (Top 15 Loci)
+top_15_table <- head(sorted_table, 15)
+write.csv(top_15_table, paste0(out_dir, "Main_Table_1_Top15.csv"), row.names = FALSE)
+
+# Generate PDF visual of the Top 15 Table
+pdf(paste0(out_dir, "Main_Table_1_Visual.pdf"), height = 8, width = 18)
+grid.table(top_15_table)
+invisible(dev.off())
+
+cat("Data successfully formatted and exported to the output directory.\n")
